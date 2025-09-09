@@ -111,6 +111,79 @@ class RoleKeeper(commands.Cog):
     @commands.command()
     @commands.guild_only()
     @commands.admin_or_permissions(manage_roles=True)
+    async def rolecheck(self, ctx, member: discord.Member):
+        """
+        Check a specific member's role status against all role chains.
+        
+        This will show what roles they have, what roles they're missing,
+        and which chains they're part of.
+        """
+        chains = await self.config.guild(ctx.guild).role_chains()
+        
+        if not chains:
+            await ctx.send("No role chains configured for this server.")
+            return
+        
+        # Get valid role chains
+        valid_chains = {}
+        for chain_name, role_ids in chains.items():
+            roles = []
+            for role_id in role_ids:
+                role = ctx.guild.get_role(role_id)
+                if role:
+                    roles.append(role)
+            
+            if len(roles) == len(role_ids):  # All roles still exist
+                valid_chains[chain_name] = roles
+        
+        if not valid_chains:
+            await ctx.send("No valid role chains found (all contain deleted roles).")
+            return
+        
+        embed = discord.Embed(
+            title=f"Role Check: {member.display_name}",
+            color=discord.Color.green()
+        )
+        
+        for chain_name, roles in valid_chains.items():
+            # Find the highest role the member has in this chain
+            highest_role_index = -1
+            member_roles_in_chain = []
+            
+            for i, role in enumerate(roles):
+                if role in member.roles:
+                    highest_role_index = i
+                    member_roles_in_chain.append(f"✅ {role.name}")
+                else:
+                    member_roles_in_chain.append(f"❌ {role.name}")
+            
+            # Check if they're missing any required roles
+            missing_roles = []
+            if highest_role_index >= 0:
+                for i in range(highest_role_index):
+                    role = roles[i]
+                    if role not in member.roles:
+                        missing_roles.append(role.name)
+            
+            status = "\n".join(member_roles_in_chain)
+            if missing_roles:
+                status += f"\n\n⚠️ **Missing required roles:** {', '.join(missing_roles)}"
+            elif highest_role_index >= 0:
+                status += "\n\n✅ **All required roles present**"
+            else:
+                status += "\n\n🔹 **Not part of this chain**"
+            
+            embed.add_field(
+                name=f"Chain: {chain_name}",
+                value=status,
+                inline=False
+            )
+        
+        await ctx.send(embed=embed)
+    
+    @commands.command()
+    @commands.guild_only()
+    @commands.admin_or_permissions(manage_roles=True)
     async def roleaudit(self, ctx):
         """
         Audit all members and fix missing roles in role chains.
@@ -148,20 +221,34 @@ class RoleKeeper(commands.Cog):
         
         # Process members in batches to avoid rate limits
         processed = 0
+        errors = 0
+        
         for member in ctx.guild.members:
             if member.bot:
                 processed += 1
                 continue
             
-            member_fixes = await self._fix_member_roles(member, valid_chains)
-            total_fixes += member_fixes
+            try:
+                member_fixes = await self._fix_member_roles(member, valid_chains)
+                total_fixes += member_fixes
+            except Exception as e:
+                log.error(f"Error processing member {member}: {e}")
+                errors += 1
+            
             processed += 1
             
             # Update progress every 50 members
             if processed % 50 == 0:
-                await progress_msg.edit(content=f"Processed {processed}/{total_members} members. Fixed {total_fixes} roles so far.")
+                status = f"Processed {processed}/{total_members} members. Fixed {total_fixes} roles"
+                if errors > 0:
+                    status += f", {errors} errors"
+                await progress_msg.edit(content=status + "...")
         
-        await progress_msg.edit(content=f"Audit complete! Processed {processed} members and fixed {total_fixes} missing roles.")
+        final_status = f"Audit complete! Processed {processed} members and fixed {total_fixes} missing roles."
+        if errors > 0:
+            final_status += f" Encountered {errors} errors (check logs for details)."
+        
+        await progress_msg.edit(content=final_status)
     
     async def _fix_member_roles(self, member: discord.Member, chains: dict) -> int:
         """Fix roles for a single member. Returns number of roles added."""
@@ -176,17 +263,24 @@ class RoleKeeper(commands.Cog):
             
             # If member has a role in this chain, ensure they have all lower roles
             if highest_role_index >= 0:
+                roles_to_add = []
+                
+                # Collect all missing roles first
                 for i in range(highest_role_index):
                     role = roles[i]
                     if role not in member.roles:
-                        try:
-                            await member.add_roles(role, reason=f"RoleKeeper: Adding missing role from {chain_name} chain")
-                            fixes += 1
-                            log.info(f"Added role {role.name} to {member} in {member.guild}")
-                        except discord.Forbidden:
-                            log.warning(f"Could not add role {role.name} to {member} - insufficient permissions")
-                        except discord.HTTPException as e:
-                            log.error(f"Failed to add role {role.name} to {member}: {e}")
+                        roles_to_add.append(role)
+                
+                # Add all missing roles at once to minimize API calls
+                if roles_to_add:
+                    try:
+                        await member.add_roles(*roles_to_add, reason=f"RoleKeeper: Adding missing roles from {chain_name} chain")
+                        fixes += len(roles_to_add)
+                        log.info(f"Added {len(roles_to_add)} roles to {member} in {member.guild} from chain {chain_name}")
+                    except discord.Forbidden:
+                        log.warning(f"Could not add roles to {member} - insufficient permissions")
+                    except discord.HTTPException as e:
+                        log.error(f"Failed to add roles to {member}: {e}")
         
         return fixes
     

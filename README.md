@@ -22,6 +22,7 @@ A RedBot cog for the TKO Rolekeeper Discord bot
 
 ### Auditing
 - `[p]roleaudit` - Audit all members and fix missing roles in chains
+- `[p]rolecheck <member>` - Check a specific member's role status against all chains
 
 ## Example Usage
 
