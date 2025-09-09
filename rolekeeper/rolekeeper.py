@@ -286,32 +286,31 @@ class RoleKeeper(commands.Cog):
 
     async def _fix_member_groups(self, member: discord.Member, groups: dict) -> int:
         """
-        Fix group roles for a single member.
-        If the member has any member role in a group, ensure they have the group role.
-        Returns the number of roles added.
+        Only add the group role if the user has any member role in the group and is missing the group role.
+        Never add or remove member roles.
+        Returns the number of group roles added.
         """
         fixes = 0
         for group_name, data in groups.items():
-            group_role = data["group_role"]
-            member_roles = data["member_roles"]
+            group_role = data["group_role"]  # discord.Role
+            member_roles = data["member_roles"]  # list of discord.Role
 
-            # Check if the user has any member role in this group
+            # Defensive: skip if any are None (deleted roles)
+            if not group_role or not member_roles or any(r is None for r in member_roles):
+                continue
+
+            # If the user has any member role in this group, add the group role if missing
             has_member_role = any(role in member.roles for role in member_roles)
-            roles_to_add = []
-            # Only add the group role if missing
             if has_member_role and group_role not in member.roles:
-                roles_to_add.append(group_role)
-            if roles_to_add:
                 try:
-                    await member.add_roles(*roles_to_add, reason=f"RoleKeeper: Adding missing group role from {group_name} group")
-                    fixes += len(roles_to_add)
-                    log.info(f"Added {len(roles_to_add)} group roles to {member} in {member.guild} from group {group_name}")
+                    await member.add_roles(group_role, reason=f"RoleKeeper: Adding missing group role from {group_name} group")
+                    fixes += 1
+                    log.info(f"Added group role {group_role} to {member} in {member.guild} from group {group_name}")
                 except discord.Forbidden:
                     log.warning(f"Could not add group role to {member} - insufficient permissions")
                 except discord.HTTPException as e:
                     log.error(f"Failed to add group role to {member}: {e}")
         return fixes
-    
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
