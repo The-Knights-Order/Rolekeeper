@@ -1,0 +1,11 @@
+{
+    "author": ["TKO"],
+    "name": "RoleKeeper",
+    "short": "Maintains role hierarchy chains",
+    "description": "A cog that maintains role hierarchy chains, ensuring users have all roles lower than their highest role in the chain.",
+    "tags": ["roles", "moderation", "hierarchy"],
+    "requirements": [],
+    "hidden": false,
+    "end_user_data_statement": "This cog stores role chain configurations per guild.",
+    "min_bot_version": "3.4.0"
+}
